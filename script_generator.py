@@ -86,14 +86,79 @@ def _client(cfg):
     )
 
 
-def _max_tokens_for(word_count: int) -> int:
-    """
-    根据目标字数估算"最多让模型输出多少 token"。
+# 中文的换算比例（实测得出的经验值）：
+# 让模型输出 1 个字，大约要花 0.6 个 token，
+# 反过来说就是 1 个 token 能出 1.67 个字。
+CHARS_PER_TOKEN = 1.67
 
-    token 是大模型计算长度的单位，中文大约 1 个字 = 0.6~1 个 token。
-    留出 1.8 倍余量保证够写，同时封顶 8000（超过模型单次输出上限会被截断）。
+# 给"结尾"预留的字数。先让模型写正文，结尾另外处理，
+# 这样万一被切断，还有空间补一个像样的收尾。
+ENDING_RESERVE_RATIO = 0.04      # 按目标字数的 4% 预留
+ENDING_RESERVE_MAX = 150         # 最多预留 150 字
+
+# 模型单次最多能输出多少 token（这是接口的硬限制，超过会被拒）
+MAX_OUTPUT_TOKENS = 8000
+
+
+def _tokens_for_chars(chars: int, margin: float = 1.05) -> int:
     """
-    return min(int(word_count * 1.8) + 200, 8000)
+    把"想写多少字"换算成"该给模型多少 token 额度"。
+
+    这是控制字数的核心手段。
+    改造前用的是 word_count * 1.8，对 4500 字的目标相当于给了 13500 字的额度，
+    等于没限制——模型就会一路写到 7550 字。
+    现在按实际换算比例给额度，写满即停，字数自然被控制住。
+
+    margin 是留的一点余量，避免因为四舍五入导致差几个字写不完。
+    """
+    tokens = int(chars / CHARS_PER_TOKEN * margin)
+    return max(64, min(tokens, MAX_OUTPUT_TOKENS))
+
+
+def _trim_to_last_sentence(text: str) -> str:
+    """
+    把结尾截到最后一个完整的句子。
+
+    模型写到额度上限时会戛然而止，比如"…总感觉词不达意，或是以"，
+    后面半句话是不完整的。这个函数把它裁掉，保证结尾是完整的话。
+    """
+    last_end = -1
+    for i, ch in enumerate(text):
+        if ch in "。！？…":
+            last_end = i
+    if last_end > 0:
+        return text[: last_end + 1].rstrip()
+    return text.rstrip()
+
+
+def _extend_script(client, cfg, text: str, need_chars: int, creativity: float) -> str:
+    """
+    文案比目标短了不少时，顺着原有语气补写一段。
+
+    只把最后 600 字发给模型（不需要把全文再传一遍，省额度也更快），
+    让它接着往下写，最后自然收尾。
+    """
+    tail = text[-600:]
+    try:
+        resp = client.chat.completions.create(
+            model=cfg.LLM_MODEL,
+            messages=[
+                {"role": "system", "content": "你是一位专业的视频文案创作者。"},
+                {"role": "user",
+                 "content": f"下面是一篇口播文案的结尾部分：\n\n…{tail}\n\n"
+                            f"这篇文案还需要再补充约 {need_chars} 字才够长度。\n"
+                            f"请顺着上面的语气接着说，补充具体内容，"
+                            f"最后自然地收尾（总结感受，并引导观众点赞评论）。\n"
+                            f"只输出要补充的那部分，不要重复上面的内容，也不要写任何说明：\n\n"
+                            f"不要输出【】标记或小标题。"},
+            ],
+            temperature=creativity,
+            max_tokens=_tokens_for_chars(need_chars, margin=1.0),
+        )
+        return (resp.choices[0].message.content or "").strip()
+    except Exception:
+        logger.warning("补写内容失败（不影响已生成的部分）", exc_info=True)
+        return ""
 
 
 # ============================================================
@@ -183,42 +248,52 @@ def generate_script(articles, style="通用", word_count=800, creativity=0.7, cf
                   + COMMON_RULES.format(word_count=word_count)
                   + "\n\n输出文案：")
 
+        # 给正文留额度（结尾另外处理）。
+        # 字数靠"给多少 token 额度"来卡，而不是靠提示词里写"请写4500字"——
+        # 实测发现模型对字数要求基本不理，但对额度上限一定会停。
+        reserve = min(ENDING_RESERVE_MAX, int(word_count * ENDING_RESERVE_RATIO))
+        body_target = max(200, word_count - reserve)
+
         response = client.chat.completions.create(
             model=cfg.LLM_MODEL,
             messages=[
                 {"role": "system",
-                 "content": f"你是一位专业的视频文案创作助手，目标字数{word_count}字，误差不超过5%。"},
+                 "content": f"你是一位专业的视频文案创作助手，请写约{word_count}字。"},
                 {"role": "user", "content": prompt},
             ],
             temperature=creativity,
-            max_tokens=_max_tokens_for(word_count),
+            max_tokens=_tokens_for_chars(body_target),
         )
-        result = (response.choices[0].message.content or "").strip()
-        actual = count_chars(result)
+        text = (response.choices[0].message.content or "").strip()
+        truncated = response.choices[0].finish_reason == "length"
+        logger.info("初稿 %s 字（目标 %s）%s",
+                    count_chars(text), word_count, "，已达额度上限" if truncated else "")
 
-        # 字数不达标就让它再改一次（最多一次，改造前是最多两次——同样的提示词连发三遍很浪费额度）
-        if actual < word_count * 0.9 or actual > word_count * 1.1:
-            logger.info("字数 %s 偏离目标 %s，请求模型调整一次", actual, word_count)
-            adjust = client.chat.completions.create(
-                model=cfg.LLM_MODEL,
-                messages=[
-                    {"role": "system", "content": f"你是一位专业的文案编辑，请精确调整文案长度到{word_count}字。"},
-                    {"role": "user",
-                     "content": f"请将以下文案调整到{word_count}字（当前{actual}字）：\n\n{result}\n\n"
-                                f"保持内容完整性和主题不变，只调整篇幅。"
-                                f"只输出调整后的正文，不要任何说明文字。"},
-                ],
-                temperature=0.3,
-                max_tokens=_max_tokens_for(word_count),
-            )
-            adjusted = (adjust.choices[0].message.content or "").strip()
-            if adjusted:
-                result = adjusted
-                actual = count_chars(result)
+        # 写到上限被切断的话，裁到最后一个完整的句子，别留半截话
+        if truncated:
+            trimmed = _trim_to_last_sentence(text)
+            if trimmed:
+                text = trimmed
 
-        logger.info("文案生成完成：%s 字（目标 %s）", actual, word_count)
-        _save_script(result, cfg)
-        return result
+        # 离目标还差不少，就顺着语气补一段（顺带把结尾写好）
+        shortfall = word_count - count_chars(text)
+        if shortfall > word_count * 0.08:
+            logger.info("还差约 %s 字，请求补足", shortfall)
+            extra = _extend_script(client, cfg, text, shortfall, creativity)
+            if extra:
+                combined = text + "\n\n" + extra
+                # 补写的那段自己也可能被额度切断，同样裁到完整句子。
+                # 但如果裁掉的比例太大（说明整段都没有句号），就宁可不裁。
+                trimmed = _trim_to_last_sentence(combined)
+                if count_chars(trimmed) > count_chars(combined) * 0.9:
+                    combined = trimmed
+                text = combined
+
+        actual = count_chars(text)
+        deviation = (actual - word_count) / word_count * 100
+        logger.info("文案生成完成：%s 字（目标 %s，偏差 %+.1f%%）", actual, word_count, deviation)
+        _save_script(text, cfg)
+        return text
 
     except Exception as e:
         # 改造前这里会把完整的报错堆栈（含本机绝对路径）直接显示在界面上，
