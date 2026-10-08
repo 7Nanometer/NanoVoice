@@ -26,3 +26,6 @@ __pycache__/
 Thumbs.db
 desktop.ini
 ~$*
+
+# 重训过程数据（体积大，且有专门的生成流程）
+data_rebuild/

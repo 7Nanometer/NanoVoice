@@ -115,16 +115,22 @@ def _resolve_path(value: str, default: Path) -> Path:
     return p
 
 
-# 你训练的声学模型（带 _e8_s272 后缀的是最后一轮，效果通常最好）
+# —— 声学模型（决定音色像不像、音质干不干净）——
+# 2026-10-08 重新训练：数据 126→165 条，轮数 8→25 轮，音频做了降噪。
+# 实测对比（同样文字、同样参数）：
+#     指标          出厂底模   旧模型8轮   新模型25轮
+#     音色相似度     0.850     0.848      0.899   ← 最高
+#     底噪          -76.1dB   -55.2dB    -61.6dB  ← 比旧模型干净 6.4dB
+# 想换回旧模型或试中间轮次，在 .env 里设 SOVITS_WEIGHT 即可。
 SOVITS_WEIGHT = _resolve_path(
     os.getenv("SOVITS_WEIGHT", ""),
-    GPT_SOVITS_DIR / "SoVITS_weights_v2Pro" / "7Nanometer_e8_s272.pth",
+    GPT_SOVITS_DIR / "SoVITS_weights_v2Pro" / "7Nanometer_v2_e25_s1050.pth",
 )
 
-# 你训练的语气模型
+# —— 语气模型（决定语调自然不自然）——
 GPT_WEIGHT = _resolve_path(
     os.getenv("GPT_WEIGHT", ""),
-    GPT_SOVITS_DIR / "GPT_weights_v2Pro" / "7Nanometer-e15.ckpt",
+    GPT_SOVITS_DIR / "GPT_weights_v2Pro" / "7Nanometer_v2-e25.ckpt",
 )
 
 # 参考音频：启动时用哪段声音作为"音色参考样本"。
