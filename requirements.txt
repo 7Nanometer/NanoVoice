@@ -37,5 +37,8 @@ openai==3.8.0
 # ---- 配置文件读取 ----
 python-dotenv==1.2.3
 
+# ---- 读取 Word 文档（拖入 .docx 文章时需要）----
+python-docx==1.2.0
+
 # ---- 数值计算（pydub 的依赖之一）----
 numpy==2.5.3

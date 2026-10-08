@@ -24,6 +24,8 @@ import gradio as gr
 
 import config
 from article_extractor import extract_text_from_url
+from file_reader import SUPPORTED_EXTENSIONS as SUPPORTED_FILE_TYPES
+from file_reader import describe_files, read_article_files
 from logger import get_logger, setup_logging
 from script_generator import generate_script, refine_script
 from speech_synthesizer import (
@@ -336,15 +338,54 @@ def extract_from_urls(urls_text):
     status = f"✅ 成功抓取 {len(good)} 篇"
     if bad:
         status += f"，失败 {len(bad)} 条：\n" + "\n".join(bad)
+    status += ("\n\n抓到的内容已填进下面「其他输入方式」的粘贴框里，"
+               "可展开查看或修改。点「✨ 生成文案」时，它会和拖入的文件一起参与生成。")
     return ARTICLE_SEP.join(good), status
 
 
-def generate_video_script(articles_text, style, word_count, creativity):
-    """点「✨ 生成文案」时调用。"""
-    articles = split_articles(articles_text)
+def preview_files(files):
+    """
+    用户拖入文件后立即调用，显示"读到了什么"。
+    让用户一眼看清哪几个文件成功了、各有多少字，避免读错了还不知道。
+    """
+    return describe_files(files)
+
+
+def generate_video_script(files, articles_text, style, word_count, creativity):
+    """
+    点「✨ 生成文案」时调用。
+
+    文章有三个来源，会**合并**后一起送去生成：
+        1. 拖进来的文件（每个文件算一篇）
+        2. 折叠区里手动粘贴的文字（用分隔标记隔开多篇）
+        3. 折叠区里从网址抓取的结果（抓取后会自动填进粘贴框）
+    """
+    # 来源一：拖入的文件
+    file_articles, file_problems = read_article_files(files)
+
+    # 来源二、三：粘贴框里的文字（网址抓取的结果也在里面）
+    text_articles = split_articles(articles_text)
+
+    articles = file_articles + text_articles
+
     if not articles:
-        return "请先输入文章内容，或用网址抓取"
-    return generate_script(articles, style, word_count, creativity, config)
+        msg = "请先拖入文章文件，或展开「其他输入方式」手动粘贴 / 从网址抓取"
+        if file_problems:
+            msg += "\n\n文件读取问题：\n" + "\n".join(file_problems)
+        return msg
+
+    logger.info("本次生成使用 %s 篇文章（文件 %s 篇 + 文字 %s 篇）",
+                len(articles), len(file_articles), len(text_articles))
+
+    result = generate_script(articles, style, word_count, creativity, config)
+
+    # 有文件读失败时，在结果最前面提醒一句（不影响正常生成）
+    if file_problems:
+        result = ("【提示】以下文件没能读取，本次未参与生成：\n"
+                  + "\n".join(f"  · {p}" for p in file_problems)
+                  + "\n\n" + "—" * 30 + "\n\n" + result)
+
+    return result
 
 
 def refine_video_script(script, suggestions):
@@ -457,19 +498,43 @@ with gr.Blocks(title="视频文案自动生成与配音系统") as demo:
         with gr.Row():
             with gr.Column(scale=1):
                 gr.Markdown("### 输入文章")
-
-                url_input = gr.Textbox(
-                    label="网址列表（每行一个）",
-                    placeholder="https://example.com/article1\nhttps://example.com/article2",
-                    lines=5,
+                gr.Markdown(
+                    "把文章文件拖到下面的框里，**一个文件算一篇文章**，"
+                    "系统会自动把多篇内容融合成一段口播文案。"
                 )
-                url_button = gr.Button("🔗 从网址提取文章", variant="primary")
 
-                articles_input = gr.Textbox(
-                    label="文章内容（多篇之间用「======== 文章分隔 ========」隔开）",
-                    placeholder="文章1内容…\n\n======== 文章分隔 ========\n\n文章2内容…",
-                    lines=10,
+                files_input = gr.File(
+                    label="拖入文章文件（可一次拖多个）",
+                    file_count="multiple",
+                    file_types=SUPPORTED_FILE_TYPES,
+                    height=150,
                 )
+
+                file_status = gr.Textbox(
+                    label="已载入的文章",
+                    interactive=False,
+                    lines=4,
+                    value=describe_files(None),
+                )
+
+                with gr.Accordion("其他输入方式（手动粘贴 / 从网址抓取）", open=False) as other_inputs:
+                    gr.Markdown(
+                        "这两种方式的内容会和上面拖入的文件**一起**参与生成，不冲突。"
+                    )
+                    url_input = gr.Textbox(
+                        label="网址列表（每行一个）",
+                        placeholder="https://example.com/article1\nhttps://example.com/article2",
+                        lines=3,
+                    )
+                    url_button = gr.Button("🔗 从网址提取文章（结果填入下方框内）")
+
+                    articles_input = gr.Textbox(
+                        label="粘贴文章内容（多篇之间用「======== 文章分隔 ========」隔开）",
+                        placeholder="文章1内容…\n\n======== 文章分隔 ========\n\n文章2内容…",
+                        lines=6,
+                    )
+
+                url_status = gr.Textbox(label="抓取状态", interactive=False, lines=3)
 
                 with gr.Row():
                     style_dropdown = gr.Dropdown(
@@ -489,8 +554,6 @@ with gr.Blocks(title="视频文案自动生成与配音系统") as demo:
                 with gr.Row():
                     generate_button = gr.Button("✨ 生成文案", variant="primary", size="lg")
                     regenerate_button = gr.Button("🔄 重新生成")
-
-                url_status = gr.Textbox(label="抓取状态", interactive=False, lines=3)
 
             with gr.Column(scale=1):
                 gr.Markdown("### 生成的文案")
@@ -583,16 +646,24 @@ with gr.Blocks(title="视频文案自动生成与配音系统") as demo:
                 )
 
     # ---------------- 按钮绑定 ----------------
-    url_button.click(extract_from_urls, inputs=url_input, outputs=[articles_input, url_status])
+    # 拖入文件后立即显示读到了什么（让用户确认，而不是"看不见地"读）
+    files_input.change(preview_files, inputs=files_input, outputs=file_status)
+
+    # 抓取网址：结果填进粘贴框，并把折叠区自动展开让用户看到
+    url_button.click(
+        extract_from_urls,
+        inputs=url_input,
+        outputs=[articles_input, url_status, other_inputs],
+    )
 
     generate_button.click(
         generate_video_script,
-        inputs=[articles_input, style_dropdown, word_count_slider, creativity_slider],
+        inputs=[files_input, articles_input, style_dropdown, word_count_slider, creativity_slider],
         outputs=script_output,
     )
     regenerate_button.click(
         generate_video_script,
-        inputs=[articles_input, style_dropdown, word_count_slider, creativity_slider],
+        inputs=[files_input, articles_input, style_dropdown, word_count_slider, creativity_slider],
         outputs=script_output,
     )
 
@@ -630,21 +701,51 @@ if __name__ == "__main__":
     elif config.APP_HOST != "127.0.0.1":
         logger.warning("⚠️ 已对局域网开放且未设密码，请注意安全！")
 
-    demo.launch(
-        server_name=config.APP_HOST,
-        server_port=config.APP_PORT,
-        # 只放行输出目录里的文件可下载。
-        # 改造前写的是 allowed_paths=["."]，等于把整个项目文件夹对外开放，
-        # 别人用 http://你的IP:7860/file=.env 就能直接下载到 API 密钥。
-        allowed_paths=[str(config.OUTPUT_DIR)],
-        # 黑名单兜底：万一白名单配错，这个文件也绝不允许下载
-        blocked_paths=[str(config.ROOT / ".env")],
-        auth=auth,
-        share=False,
-        inbrowser=True,
-        show_error=True,
-        prevent_thread_lock=True,
-    )
+    # 启动前先看看端口有没有被占。
+    # 不然会甩出一大段英文报错（Cannot find empty port...），
+    # 最常见的原因是：上一次的程序没关干净，或者双击了两次 start.bat。
+    if is_port_in_use(config.APP_PORT):
+        print()
+        print("=" * 62)
+        print(f"  启动失败：端口 {config.APP_PORT} 已经被占用")
+        print("=" * 62)
+        print()
+        print("  多半是上一次的程序还开着。请依次尝试：")
+        print()
+        print("   1. 找找看有没有别的黑色命令行窗口还开着，把它关掉")
+        print("   2. 或者打开浏览器访问 http://127.0.0.1:7860")
+        print("      —— 如果界面能打开，说明程序本来就在运行，不用再启动")
+        print("   3. 都不行就在命令行执行下面两行，强制清掉：")
+        print(f"        netstat -ano | findstr :{config.APP_PORT}")
+        print("        taskkill /F /PID <上面显示的数字>")
+        print()
+        input("  按回车键退出…")
+        sys.exit(1)
+
+    try:
+        demo.launch(
+            server_name=config.APP_HOST,
+            server_port=config.APP_PORT,
+            # 只放行输出目录里的文件可下载。
+            # 改造前写的是 allowed_paths=["."]，等于把整个项目文件夹对外开放，
+            # 别人用 http://你的IP:7860/file=.env 就能直接下载到 API 密钥。
+            allowed_paths=[str(config.OUTPUT_DIR)],
+            # 黑名单兜底：万一白名单配错，这个文件也绝不允许下载
+            blocked_paths=[str(config.ROOT / ".env")],
+            auth=auth,
+            share=False,
+            inbrowser=True,
+            show_error=True,
+            prevent_thread_lock=True,
+        )
+    except OSError as e:
+        logger.error("界面启动失败：%s", e)
+        print()
+        print(f"  界面启动失败：{e}")
+        print("  详情见日志 outputs/logs/app.log")
+        print()
+        input("  按回车键退出…")
+        sys.exit(1)
 
     logger.info("界面已启动: http://%s:%s", config.APP_HOST, config.APP_PORT)
     try:
