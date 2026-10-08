@@ -14,6 +14,7 @@ import os
 import re
 import socket
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -96,6 +97,26 @@ def is_port_in_use(port: int) -> bool:
             return s.connect_ex(("127.0.0.1", port)) == 0
     except OSError as e:
         logger.warning("探测端口 %s 出错: %s", port, e)
+        return False
+
+
+def _looks_like_our_app(port: int) -> bool:
+    """
+    判断占着某个端口的是不是"我们这个程序"。
+
+    做法：访问它的首页，看能不能正常回复。
+    这样双击 start.bat 两次时，第二次不会报错，而是直接打开已运行的界面——
+    用户本来就只是想看到那个页面，没必要让他去理解"端口占用"。
+    """
+    import urllib.error
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=3) as resp:
+            body = resp.read(2000).decode("utf-8", errors="replace")
+            # gradio 的页面里会有这些特征词
+            return resp.status == 200 and ("gradio" in body.lower() or "<!doctype html" in body.lower())
+    except (urllib.error.URLError, OSError, ValueError):
         return False
 
 
@@ -705,19 +726,38 @@ if __name__ == "__main__":
     # 不然会甩出一大段英文报错（Cannot find empty port...），
     # 最常见的原因是：上一次的程序没关干净，或者双击了两次 start.bat。
     if is_port_in_use(config.APP_PORT):
+        # 先判断占着端口的是不是"我们这个程序"。
+        # 如果是，就别报错了，直接把浏览器打开——用户要的本来就是那个界面。
+        if _looks_like_our_app(config.APP_PORT):
+            print()
+            print("=" * 62)
+            print("  程序已经在运行了，正在为你打开界面…")
+            print("=" * 62)
+            print()
+            print(f"  如果浏览器没有自动打开，手动访问： http://127.0.0.1:{config.APP_PORT}")
+            print()
+            print("  提示：那个正在运行的程序在另一个命令行窗口里，关掉它才能退出系统。")
+            print()
+            import webbrowser
+
+            webbrowser.open(f"http://127.0.0.1:{config.APP_PORT}")
+            time.sleep(2)
+            sys.exit(0)
+
+        # 端口被别的程序占着
         print()
         print("=" * 62)
-        print(f"  启动失败：端口 {config.APP_PORT} 已经被占用")
+        print(f"  启动失败：端口 {config.APP_PORT} 被别的程序占用了")
         print("=" * 62)
         print()
-        print("  多半是上一次的程序还开着。请依次尝试：")
+        print("  请依次尝试：")
         print()
-        print("   1. 找找看有没有别的黑色命令行窗口还开着，把它关掉")
-        print("   2. 或者打开浏览器访问 http://127.0.0.1:7860")
-        print("      —— 如果界面能打开，说明程序本来就在运行，不用再启动")
-        print("   3. 都不行就在命令行执行下面两行，强制清掉：")
+        print("   1. 在命令行执行下面两行，查出是谁占的：")
         print(f"        netstat -ano | findstr :{config.APP_PORT}")
-        print("        taskkill /F /PID <上面显示的数字>")
+        print("        tasklist /FI \"PID eq 上面显示的数字\"")
+        print("   2. 确认是不需要的程序后，结束它：")
+        print("        taskkill /F /PID 那个数字")
+        print("   3. 或者改个端口：在 .env 里加一行  APP_PORT=7861")
         print()
         input("  按回车键退出…")
         sys.exit(1)
