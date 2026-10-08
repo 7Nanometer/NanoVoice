@@ -1,0 +1,28 @@
+# ===== 密钥：绝对不能提交 =====
+.env
+
+# ===== 第三方大文件：不纳入版本管理（16GB，有独立搬运脚本 copy_sovits.bat）=====
+GPT-SoVITS/
+
+# ===== 运行产物 =====
+outputs/
+samples/
+*.mp3
+*.wav
+*.log
+
+# ===== 旧的虚拟环境（已损坏，仅存档用）=====
+venv/
+
+# ===== Python 常规 =====
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# ===== 编辑器 / 系统 =====
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+~$*
