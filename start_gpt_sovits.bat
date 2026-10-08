@@ -1,12 +1,31 @@
-﻿@echo off
-echo 正在启动GPT-SoVITS服务...
-cd /d G:\GPT-SoVITS-v2pro-20250604
-echo 当前目录: %cd%
+@echo off
+chcp 65001 >nul
+setlocal
+cd /d "%~dp0"
 
-set PYTHON_EXE=G:\GPT-SoVITS-v2pro-20250604\runtime\python.exe
-set S2_MODEL=G:\GPT-SoVITS-v2pro-20250604\GPT_SoVITS\pretrained_models\v2Pro\s2Gv2Pro.pth
-set S1_MODEL=G:\GPT-SoVITS-v2pro-20250604\GPT_SoVITS\pretrained_models\s1v3.ckpt
-set REF_AUDIO=G:\GPT-SoVITS-v2pro-20250604\logs\7Nanometer\5-wav32k\阿基拉.mp3_0000000000_0000310400.wav
+rem ============================================================
+rem  Only start the voice engine (GPT-SoVITS) service.
+rem  Normally you do NOT need this file -- just click
+rem  "Start Service" inside the web UI.
+rem
+rem  Use this when the web UI cannot open and you want to
+rem  check whether the voice engine itself works.
+rem ============================================================
 
-echo 启动命令: %PYTHON_EXE% api.py -d cuda -s "%S2_MODEL%" -g "%S1_MODEL%" -dr "%REF_AUDIO%" -dt "测试语音克隆" -dl "zh"
-%PYTHON_EXE% api.py -d cuda -s "%S2_MODEL%" -g "%S1_MODEL%" -dr "%REF_AUDIO%" -dt "测试语音克隆" -dl "zh" 2>&1
+set PYTHONUTF8=1
+set PYTHONIOENCODING=utf-8
+
+set PY=python
+where python >nul 2>nul
+if errorlevel 1 (
+    if exist "%LOCALAPPDATA%\Programs\Python\Python313\python.exe" (
+        set PY=%LOCALAPPDATA%\Programs\Python\Python313\python.exe
+    ) else (
+        echo [ERROR] Python not found. Please install Python 3.10+ first.
+        pause
+        exit /b 1
+    )
+)
+
+"%PY%" run_sovits.py
+pause
