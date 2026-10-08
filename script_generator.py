@@ -329,13 +329,21 @@ def refine_script(script, suggestions, cfg=None):
                             f"请直接输出修改后的文案："},
             ],
             temperature=0.5,
-            # 改造前这里没设上限，长文案可能被服务端默认上限从中间截断，用户还看不出来
-            max_tokens=_max_tokens_for(count_chars(script)),
+            # 润色后的篇幅应该和原文差不多，所以按原文字数给额度，留 15% 的余地，
+            # 避免改写后稍微变长就被切断。
+            # （改造前这里完全没设上限，长文案可能被服务端默认上限从中间截断，用户还看不出来）
+            max_tokens=_tokens_for_chars(int(count_chars(script) * 1.15)),
         )
         result = (response.choices[0].message.content or "").strip()
         if not result:
             return script
-        logger.info("文案润色完成")
+
+        # 万一还是被切断，裁到最后一句完整的话
+        trimmed = _trim_to_last_sentence(result)
+        if count_chars(trimmed) > count_chars(result) * 0.9:
+            result = trimmed
+
+        logger.info("文案润色完成：%s 字 → %s 字", count_chars(script), count_chars(result))
         _save_script(result, cfg, kind="润色后")
         return result
 
