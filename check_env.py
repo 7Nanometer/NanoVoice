@@ -89,7 +89,8 @@ def main():
     section("2. 依赖库")
     # (import名字, 显示名, 是否必需)
     deps = [
-        ("gradio", "gradio（网页界面）", True),
+        ("fastapi", "fastapi（新版界面后端）", True),
+        ("uvicorn", "uvicorn（新版界面服务器）", True),
         ("pydub", "pydub（音频拼接）", True),
         ("audioop", "audioop（音频运算，Python3.13需要单独装 audioop-lts）", True),
         ("edge_tts", "edge-tts（微软在线语音）", True),
@@ -97,6 +98,7 @@ def main():
         ("bs4", "beautifulsoup4（网页解析）", True),
         ("openai", "openai（大模型接口）", True),
         ("dotenv", "python-dotenv（读取配置文件）", True),
+        ("gradio", "gradio（旧版界面，备用）", True),
     ]
     for mod_name, label, required in deps:
         try:

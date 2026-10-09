@@ -63,10 +63,17 @@
 
   /* —— 通知气泡 —— */
   const toastBox = $('#toasts');
+  // 三种状态各配一个小图标（对勾 / 叹号 / 叉），跟左侧色条同色
+  const TOAST_ICONS = {
+    ok: `<svg class="toast-icon" viewBox="0 0 20 20" fill="none"><path d="m4.5 10.5 3.6 3.6L15.5 6.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    warn: `<svg class="toast-icon" viewBox="0 0 20 20" fill="none"><path d="M10 3.5 17 16H3L10 3.5Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M10 8.5v3.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="10" cy="14" r=".4" stroke="currentColor" stroke-width="1.4"/></svg>`,
+    bad: `<svg class="toast-icon" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.8"/><path d="m7.5 7.5 5 5m0-5-5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>`,
+  };
   function toast(message, kind = 'ok', duration = 3800) {
     const el = document.createElement('div');
     el.className = 'toast' + (kind === 'bad' ? ' is-bad' : kind === 'warn' ? ' is-warn' : '');
-    el.textContent = message;
+    el.innerHTML = (TOAST_ICONS[kind] || TOAST_ICONS.ok) + '<span></span>';
+    el.lastElementChild.textContent = message;   // 用 textContent 防注入
     toastBox.appendChild(el);
     setTimeout(() => {
       el.classList.add('is-out');
