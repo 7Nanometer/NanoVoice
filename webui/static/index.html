@@ -178,15 +178,17 @@
                         placeholder="生成的文案会显示在这里…"></textarea>
 
               <div class="actions">
-                <button class="btn btn-primary btn-lg" id="btnGenerate" type="button">
-                  <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                    <path d="M10 2.5 11.8 7.2 16.5 9 11.8 10.8 10 15.5 8.2 10.8 3.5 9 8.2 7.2 10 2.5Z"
-                          stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
-                    <path d="M15.5 13.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8.8-2Z"
-                          fill="currentColor"/>
-                  </svg>
-                  生成文案
-                </button>
+                <div class="action-primary">
+                  <button class="btn btn-primary btn-lg" id="btnGenerate" type="button">
+                    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                      <path d="M10 2.5 11.8 7.2 16.5 9 11.8 10.8 10 15.5 8.2 10.8 3.5 9 8.2 7.2 10 2.5Z"
+                            stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+                      <path d="M15.5 13.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8.8-2Z"
+                            fill="currentColor"/>
+                    </svg>
+                    生成文案
+                  </button>
+                </div>
                 <button class="btn btn-ghost" id="btnRegenerate" type="button">
                   <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
                     <path d="M16.5 10a6.5 6.5 0 1 1-1.9-4.6M16.5 2.5V6h-3.5"
@@ -382,17 +384,24 @@
                 <p class="synth-status-time"><span id="synthElapsed">0:00</span> 已用时</p>
               </div>
 
+              <div class="recent" id="recentBox" hidden>
+                <h3 class="recent-title">最近生成</h3>
+                <div class="recent-list" id="recentList"></div>
+              </div>
+
               <div class="divider"></div>
               <p class="hint" id="synthMessage"></p>
 
-              <button class="btn btn-primary btn-lg btn-block" id="btnSynthesize" type="button">
-                <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                  <rect x="7.5" y="2.5" width="5" height="9" rx="2.5" stroke="currentColor" stroke-width="1.7"/>
-                  <path d="M4.5 9.5a5.5 5.5 0 0 0 11 0M10 15v3" stroke="currentColor"
-                        stroke-width="1.7" stroke-linecap="round"/>
-                </svg>
-                开始合成配音
-              </button>
+              <div class="action-primary">
+                <button class="btn btn-primary btn-lg btn-block" id="btnSynthesize" type="button">
+                  <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                    <rect x="7.5" y="2.5" width="5" height="9" rx="2.5" stroke="currentColor" stroke-width="1.7"/>
+                    <path d="M4.5 9.5a5.5 5.5 0 0 0 11 0M10 15v3" stroke="currentColor"
+                          stroke-width="1.7" stroke-linecap="round"/>
+                  </svg>
+                  开始合成配音
+                </button>
+              </div>
             </div>
 
           </div>
@@ -403,9 +412,9 @@
     </div>
 
     <footer class="footer">
-      <span>克隆模型：<b id="modelAcoustic">—</b> + <b id="modelGpt">—</b></span>
+      <span>自训练语音模型：<b id="modelName">—</b></span>
       <span class="footer-sep">·</span>
-      <span>输出目录：<b id="outputDir">—</b></span>
+      <span>全程本地运行，成品保存在 <b>outputs/audio</b></span>
     </footer>
 
   </main>

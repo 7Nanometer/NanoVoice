@@ -374,6 +374,37 @@ def api_synthesize(req: SynthReq):
     return {"ok": True, "task_id": task_id}
 
 
+@app.get("/api/recent")
+def api_recent(limit: int = 5):
+    """
+    最近合成的成品列表（给界面上的"最近生成"用）。
+    做法很简单：扫一遍输出目录，按修改时间倒序，取最新的几个。
+    （只扫最外层，不扫子文件夹——子文件夹里是诊断样本之类，不是给用户听的成品。）
+    """
+    try:
+        files = sorted(
+            config.AUDIO_DIR.glob("*.mp3"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        files = []
+
+    items = []
+    for p in files[: max(1, min(limit, 20))]:
+        try:
+            st = p.stat()
+        except OSError:
+            continue
+        items.append({
+            "name": p.name,
+            "url": f"/audio/{p.name}",
+            "size": st.st_size,
+            "mtime": st.st_mtime,
+        })
+    return {"ok": True, "files": items}
+
+
 @app.get("/api/synthesize/status/{task_id}")
 def api_synth_status(task_id: str):
     """取件窗口：问问某个配音任务现在怎么样了。"""

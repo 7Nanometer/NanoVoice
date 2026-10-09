@@ -150,12 +150,14 @@
         sel.appendChild(opt);
       }
 
-      // 页脚的模型信息
-      $('#modelAcoustic').textContent = state.models.acoustic || '—';
-      $('#modelGpt').textContent = state.models.gpt || '—';
-      $('#outputDir').textContent = data.outputDir || '—';
+      // 页脚：只留用户认得出来的模型名。
+      // 完整的权重文件名（如 7Nanometer_v2_e25_s1050）是训练参数，
+      // 对观众是天书——把它剪成模型本名（7Nanometer_v2）就够了。
+      $('#modelName').textContent =
+        (state.models.acoustic || '—').replace(/_e\d+_s\d+$/, '').replace(/_s\d+$/, '');
 
       applySovits(data.sovits);
+      loadRecent();
     } catch (e) {
       toast('打不开后端服务：' + e.message, 'bad', 6000);
     }
@@ -165,26 +167,33 @@
      四、语音服务状态
      ============================================================ */
 
-  /** 把一份状态数据刷到界面各处（顶栏圆点、克隆卡片、状态盒子） */
+  /** 把一份状态数据刷到界面各处（顶栏圆点、克隆卡片） */
   function applySovits(info) {
     const online = !!info?.online;
-    const msg = info?.message || (online ? '语音服务已连接' : '语音服务未连接');
+    const msg = info?.message || '';
 
     const dot = $('#topDot');
     dot.className = 'dot ' + (online ? 'is-on' : 'is-off');
-    $('#topStatusText').textContent = online ? '语音服务在线' : '语音服务离线';
+    // 顶栏用的是"中性陈述"而不是"离线报警"：
+    // 引擎没启动是一件正常的事（用户可能只想用在线声音），不是故障
+    $('#topStatusText').textContent = online ? '语音引擎在线' : '语音引擎未启动';
 
     const sdot = $('#sovitsDot');
     sdot.className = 'dot ' + (online ? 'is-on' : 'is-off');
-    $('#sovitsPillText').textContent = online ? '在线' : '离线';
+    $('#sovitsPillText').textContent = online ? '在线' : '未启动';
     $('#sovitsPill').className = 'pill pill--status ' + (online ? 'is-on' : 'is-off');
 
+    // 状态盒只在本"有事要说"时出现：
+    // 在线时药丸已经说明一切，不再重复第三遍（启动过程中的日志另行显示）
     const box = $('#sovitsStatusBox');
-    box.textContent = online
-      ? `${msg}\n克隆模型已就绪，可以合成配音了。`
-      : `${msg}\n提示：点「启动服务」，等 10~30 秒模型加载完成。`;
-    // 离线只是"未就绪"（琥珀提醒），不是出错（红色）——红色留给真正的故障
-    box.className = 'status-box ' + (online ? 'is-ok' : 'is-warn');
+    if (online) {
+      box.hidden = true;
+    } else {
+      box.hidden = false;
+      box.textContent = `${msg}\n提示：点「启动服务」，等 10~30 秒模型加载完成。`;
+      // 未启动只是"还没轮到"（琥珀提醒），不是出错（红色）——红色留给真正的故障
+      box.className = 'status-box is-warn';
+    }
   }
 
   async function refreshSovits(showToast = false) {
@@ -228,6 +237,7 @@
     const btn = $('#btnStartSovits');
     const box = $('#sovitsStatusBox');
     setBusy(btn, true, '启动中…');
+    box.hidden = false;   // 启动过程有实时日志要展示
     box.className = 'status-box';
     box.textContent = '正在发送启动命令…';
     try {
@@ -306,12 +316,25 @@
      六、滑块（实时显示数值 + 染色进度条）
      ============================================================ */
 
-  function bindRange(id, valueId, format) {
+  /**
+   * 绑定一个滑块。
+   * bipolar=true 的表"双向滑块"（语速/音量，0 在正中）：
+   * 它的染色从正中间向两边长，而不是从左边缘长——
+   * 否则 0%（不变）看起来像"已经拉到 50%"，是控件在说谎。
+   */
+  function bindRange(id, valueId, format, bipolar = false) {
     const el = $('#' + id);
     const out = $('#' + valueId);
     const sync = () => {
       const min = +el.min, max = +el.max, v = +el.value;
-      el.style.setProperty('--p', ((v - min) / (max - min)) * 100 + '%');
+      const p = ((v - min) / (max - min)) * 100;
+      if (bipolar) {
+        el.style.setProperty('--fill-start', Math.min(50, p) + '%');
+        el.style.setProperty('--fill-end', Math.max(50, p) + '%');
+      } else {
+        el.style.setProperty('--fill-start', '0%');
+        el.style.setProperty('--fill-end', p + '%');
+      }
       out.textContent = format(v);
     };
     el.addEventListener('input', sync);
@@ -320,8 +343,8 @@
 
   bindRange('wordCountRange', 'wordCountValue', (v) => `${v} 字`);
   bindRange('creativityRange', 'creativityValue', (v) => v.toFixed(1));
-  bindRange('rateRange', 'rateValue', (v) => (v > 0 ? `+${v}` : `${v}`) + '%');
-  bindRange('volumeRange', 'volumeValue', (v) => (v > 0 ? `+${v}` : `${v}`) + '%');
+  bindRange('rateRange', 'rateValue', (v) => (v > 0 ? `+${v}` : `${v}`) + '%', true);
+  bindRange('volumeRange', 'volumeValue', (v) => (v > 0 ? `+${v}` : `${v}`) + '%', true);
   bindRange('pauseRange', 'pauseValue', (v) => `${v} ms`);
 
   /* ============================================================
@@ -472,6 +495,10 @@
         $('#scriptOutput').value = script;
         updateWordCount();
         toast('文案生成完成');
+        // 手机上单列排布，生成按钮和结果框可能不在同一屏——滚过去让用户看到
+        if (window.innerWidth <= 1080) {
+          $('#scriptOutput').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
       }
     } catch (e) {
       toast('生成失败：' + e.message, 'bad', 6000);
@@ -650,6 +677,7 @@
       setSynthUI(false);
       if (r.status === 'done') {
         showPlayer(r.audio_url, r.filename);
+        loadRecent();   // 把刚出炉的成品刷进"最近生成"列表最上面
         $('#synthMessage').textContent = r.message || '';
         toast('配音合成完成');
       } else {
@@ -680,6 +708,7 @@
     player.hidden = false;
     $('#audioEmpty').style.display = 'none';   // 有产物了，空态收起
     player.classList.remove('is-playing');
+    syncRecentCurrent();   // "最近生成"列表里把正在载入的这条点亮
     $('#playerName').textContent = filename || '配音';
     $('#downloadBtn').href = url;
     $('#downloadBtn').setAttribute('download', filename || '');
@@ -714,6 +743,73 @@
     const rect = e.currentTarget.getBoundingClientRect();
     audio.currentTime = ((e.clientX - rect.left) / rect.width) * audio.duration;
   });
+
+  /* ============================================================
+     十一·五、"最近生成"列表
+     ============================================================
+     列出输出目录里最新的几个成品。点一行 → 载入播放器回听；
+     右侧小箭头 → 单独下载。合成完成后会自动刷新（新的排最前）。
+  */
+
+  /** 把列表里正载入播放器的那条点亮（其他熄灭） */
+  function syncRecentCurrent() {
+    let path = '';
+    try { path = audio.getAttribute('src') ? new URL(audio.src, location.href).pathname : ''; } catch { /* 忽略 */ }
+    $$('.recent-item').forEach((el) => {
+      el.classList.toggle('is-current', !!path && el.dataset.url === path);
+    });
+  }
+
+  async function loadRecent() {
+    const box = $('#recentBox');
+    const list = $('#recentList');
+    let r;
+    try {
+      r = await api('/api/recent');
+    } catch {
+      return;   // 列不出来也不影响主流程，静默跳过
+    }
+    if (!r.files || !r.files.length) {
+      box.hidden = true;
+      list.innerHTML = '';
+      return;
+    }
+    box.hidden = false;
+    list.innerHTML = '';
+    for (const f of r.files) {
+      const row = document.createElement('div');
+      row.className = 'recent-item';
+      row.dataset.url = f.url;
+
+      const t = new Date(f.mtime * 1000);
+      const stamp = `${t.getMonth() + 1}/${t.getDate()} ${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
+
+      row.innerHTML = `
+        <span class="r-wave" aria-hidden="true"></span>
+        <span class="r-name"></span>
+        <span class="r-time">${stamp}</span>
+        <button class="r-dl" title="下载这一条" type="button" aria-label="下载">
+          <svg viewBox="0 0 20 20" fill="none"><path d="M10 3v9m0 0 3.5-3.5M10 12 6.5 8.5M4 15.5h12"
+            stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>`;
+      $('.r-name', row).textContent = f.name;   // textContent 防注入
+
+      row.addEventListener('click', (e) => {
+        if (e.target.closest('.r-dl')) return;   // 点下载按钮时不触发播放
+        showPlayer(f.url, f.name);
+      });
+      $('.r-dl', row).addEventListener('click', () => {
+        const a = document.createElement('a');
+        a.href = f.url;
+        a.download = f.name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      });
+      list.appendChild(row);
+    }
+    syncRecentCurrent();
+  }
 
   /* ============================================================
      十二、首屏声波（canvas）
@@ -754,18 +850,30 @@
 
     function draw(t) {
       ctx.clearRect(0, 0, W, H);
-      const cy = H * .54;              // 波的中心线：压在大标题下方一点
-      const base = Math.min(H * .34, 150);
+
+      /* 波的"站位"按屏幕宽窄分两套（大标题附近不能让波穿过去，
+         绿字和绿波叠在一起会互相"毛化"，读起来费劲）：
+         · 宽屏：标题只占左半边，波从右侧 42% 处渐强——像声音
+           从文字的右边淌出去；左侧（标题脚下）不出波。
+         · 窄屏（手机）：没有"右半边"可用，波整体下移到
+           hero 底部、振幅减半，变成一条"从底部涌出的声音"。 */
+      const narrow = window.innerWidth < 1081;
+      const cy = narrow ? H * .9 : H * .52;
+      const base = Math.min(H * .34, 150) * (narrow ? .55 : 1);
+
+      const envelope = (u) => {
+        if (narrow) return Math.sin(Math.PI * u) ** 1.2;   // 手机：中间强两头弱
+        return Math.min(1, Math.max(0, (u - .42) / .3));   // 桌面：从 42% 处渐强
+      };
 
       for (const w of waves) {
         ctx.beginPath();
         for (let x = 0; x <= W; x += 3) {
           const u = x / W;
-          // 中心强两头弱（两端不画到边缘，视觉更柔和）
-          const envelope = Math.sin(Math.PI * u) ** 1.2;
+          const env = envelope(u);
           const y = cy
-            + Math.sin(u * Math.PI * 2 * w.freq + t * w.speed + w.phase) * w.amp * base * envelope
-            + Math.sin(u * Math.PI * 2 * w.freq * .37 + t * w.speed * .6) * w.amp * base * .35 * envelope;
+            + Math.sin(u * Math.PI * 2 * w.freq + t * w.speed + w.phase) * w.amp * base * env
+            + Math.sin(u * Math.PI * 2 * w.freq * .37 + t * w.speed * .6) * w.amp * base * .35 * env;
           if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
         }
         ctx.strokeStyle = `rgba(52, 211, 153, ${w.alpha})`;
