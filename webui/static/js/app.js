@@ -754,7 +754,13 @@
   /** 把列表里正载入播放器的那条点亮（其他熄灭） */
   function syncRecentCurrent() {
     let path = '';
-    try { path = audio.getAttribute('src') ? new URL(audio.src, location.href).pathname : ''; } catch { /* 忽略 */ }
+    try {
+      if (audio.src) {
+        // 注意：文件名里有中文，浏览器把 src 里的中文转成了 %E9%85%8D 这种
+        // 百分号编码——要和列表里的原始路径比对，得先解码回来。
+        path = decodeURIComponent(new URL(audio.src, location.href).pathname);
+      }
+    } catch { /* 忽略 */ }
     $$('.recent-item').forEach((el) => {
       el.classList.toggle('is-current', !!path && el.dataset.url === path);
     });
