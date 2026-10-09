@@ -4,9 +4,14 @@ setlocal
 cd /d "%~dp0"
 
 rem ============================================================
-rem  一键启动：先自检，再打开系统
+rem  一键启动：先自检，再打开系统（新版界面）
 rem  %~dp0 表示"这个 bat 文件自己所在的目录"，
 rem  所以整个项目文件夹搬到哪都能双击运行。
+rem
+rem  新版界面由两部分组成（都在 webui 文件夹里）：
+rem    server.py          后端服务（Python）
+rem    static\            前端页面（HTML/CSS/JS）
+rem  万一新版出问题，双击 start_legacy.bat 可回到旧版界面。
 rem ============================================================
 
 rem 让 Python 用 UTF-8 输出，避免中文乱码
@@ -48,7 +53,7 @@ echo.
 echo 第二步：启动系统...
 echo 浏览器会自动打开界面，关闭本窗口即可退出系统。
 echo.
-"%PY%" main.py
+"%PY%" webui\server.py
 
 echo.
 echo 系统已退出。
