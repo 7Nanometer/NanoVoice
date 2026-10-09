@@ -654,13 +654,23 @@
 
   /** 拿着任务号轮询：每秒问一次后端"做好了吗" */
   async function pollSynth(taskId) {
+    let networkFails = 0;
     for (;;) {
       await sleep(1000);
       let r;
       try {
         r = await api(`/api/synthesize/status/${taskId}`);
+        networkFails = 0;
       } catch {
-        continue; // 网络打嗝，下秒再问
+        // 偶发的网络打嗝：下秒再问；但持续不通（服务器可能关了）
+        // 就不无限转圈了，给用户一个明确的结束
+        networkFails += 1;
+        if (networkFails >= 10) {
+          setSynthUI(false);
+          toast('与服务器失去联系，请刷新页面后到「最近生成」里查看结果', 'bad', 8000);
+          return;
+        }
+        continue;
       }
       if (!r.ok) {
         setSynthUI(false);

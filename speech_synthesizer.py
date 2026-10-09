@@ -17,6 +17,7 @@
 """
 
 import asyncio
+import math
 import re
 import time
 from pathlib import Path
@@ -69,6 +70,11 @@ def sanitize_for_tts(text: str) -> str:
         return ""
     # 清掉【】包裹的标记（包括中文书名号里的）
     text = re.sub(r"【[^】]*】", "", text)
+    # 清掉行内的 Markdown 符号：**加粗**、__下划线__、`代码`
+    # （不清的话这些星号可能被语音引擎当字符念出来："星号星号注意"）
+    text = re.sub(r"\*\*|__|`+", "", text)
+    # Markdown 链接 [文字](网址) → 只保留"文字"，丢掉网址部分
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
     # 清掉每行开头的 Markdown 记号（#、*、>、-）和序号（1. 2、 三、）
     text = re.sub(r"^[\s>*#\-]+", "", text, flags=re.MULTILINE)
     text = re.sub(r"^\s*\d+[.、)]\s*", "", text, flags=re.MULTILINE)
@@ -93,24 +99,48 @@ def split_text_into_chunks(text: str, max_length: int = 300) -> list:
     """
     sentences = []
     current = ""
-    for char in text:
+    for i, char in enumerate(text):
         current += char
-        # 遇到句末标点且这句话已经够长了，就断句
-        # （>10 是避免把"你好。"这种短句也单独切出来，太碎听着不连贯）
-        if char in "。！？；\n" and len(current) > 10:
+        if len(current) <= 10:
+            continue   # 太短的句子不切，避免"你好。"这种被单独切出来，听着不连贯
+        # 中文/通用句末标点（2026-10-09 补上省略号"…"）
+        if char in "。！？；…\n":
             sentences.append(current.strip())
+            current = ""
+        # 英文叹号问号：直接用（中文文案里罕见，但英文文案需要）
+        elif char in "!?":
+            sentences.append(current.strip())
+            current = ""
+        # 英文句号：只有"点 + 空格/行尾"才算句末——
+        # 这样 3.14、v2.0、example.com 这类小数点不会被误切。
+        # （句尾补一个空格：英文断句后，原句号后面的空格会落在下一句的开头
+        #  被 strip 掉，导致攒块合并时单词粘连"stays.Next"）
+        elif char == "." and (i + 1 >= len(text) or text[i + 1] in " \n\t"):
+            sentences.append(current.strip() + " ")
             current = ""
     if current.strip():
         sentences.append(current.strip())
 
-    # 把超长的单句硬切开（按字数均分，没有更聪明的办法了）
+    # 超长句尽量在标点处切开（2026-10-09 改进）。
+    # 原来直接按字数均分，会把词拦腰切断——实测真实文案有一块结尾恰好切在
+    # 词中间，后半句被引擎自动补了句号，听感"说到一半戛然而止"。
     safe_sentences = []
     for s in sentences:
-        if len(s) > max_length:
-            for i in range(0, len(s), max_length):
-                safe_sentences.append(s[i:i + max_length])
-            logger.debug("有超长句被硬切：原长 %s 字", len(s))
-        else:
+        while len(s) > max_length:
+            # 在"目标位置往前 15 字"的窗口里，找最靠后的一个标点。
+            # 右边界用 max_length+1：允许标点正好在 max_length 这个位置
+            # （否则恰好在临界处的逗号会被漏掉）
+            window_start = max(0, max_length - 15)
+            cut = -1
+            for p in "，、,;：:）)":
+                pos = s.rfind(p, window_start, max_length + 1)
+                if pos > cut:
+                    cut = pos
+            if cut == -1:
+                cut = max_length - 1     # 窗口里实在没标点，才硬切
+            safe_sentences.append(s[:cut + 1])
+            s = s[cut + 1:]
+        if s:
             safe_sentences.append(s)
 
     # 攒块
@@ -151,7 +181,8 @@ async def text_to_speech_edge(text, output_file, voice, rate, volume):
 
 
 async def text_to_speech_gpt_sovits(text, output_file, refer_wav_path="",
-                                    prompt_text="", prompt_language="all_zh", cfg=None):
+                                    prompt_text="", prompt_language="zh",
+                                    cfg=None, speed=1.0):
     """
     用本地 GPT-SoVITS 合成一句，存成 wav。
 
@@ -162,13 +193,17 @@ async def text_to_speech_gpt_sovits(text, output_file, refer_wav_path="",
 
     payload = {
         "text": text,
-        "text_language": "all_zh",
+        # 2026-10-09 由 "all_zh" 改为 "zh"：实测内容完整度 94% → 100%
+        # （"all_zh" 会把中英混排按中文规则处理，遇到英文/数字容易吞字）
+        "text_language": "zh",
         "top_k": 30,          # 采样参数，控制"随机性"
         "top_p": 0.8,
         "temperature": 0.8,
-        "speed": 1.0,
+        "speed": speed,       # 由界面上的"语速"滑块换算而来（1.0 = 原速）
         "sample_steps": 32,   # 推理步数，越大越精细也越慢
-        "cut_punc": "",
+        # 2026-10-09 原来为空（等于关闭句内停顿）——现在句内标点处也有停顿，
+        # 听感更像真人（实测原设置把合成音频"听写"回来都听不出句号停顿）
+        "cut_punc": "，。！？、；：",
     }
 
     # 带上参考音频和它对应的文字（决定"学谁的声音"）
@@ -302,16 +337,21 @@ def prepare_refer_audio(uploaded_path, cfg):
 # 四、响度对齐
 # ============================================================
 
-def _match_loudness(segment, target_dbfs, max_adjust_db=12.0):
+def _match_loudness(segment, target_dbfs, max_adjust_db=6.0):
     """
-    把一句话的音量拉到统一水平。
+    把一句话的音量往统一水平"轻轻推一把"。
 
     为什么需要：逐句合成时，每句话的音量经常不一样（尤其 GPT-SoVITS 和微软语音
     混着用的时候），拼起来会"忽大忽小"，听着不舒服。
 
     dBFS 是衡量音量的单位（0 是最大值，负数越小越轻）。
     这个函数算出"当前音量"和"目标音量"差多少，然后统一加减。
-    限制最多调整 12 分贝，是为了避免把本来就很轻的片段（可能是静音或噪声）放大到失真。
+
+    2026-10-09 上限由 12 分贝收紧到 6 分贝：
+    原设置会把每句话都"强行拉平"到同一音量，句子之间自然的轻重起伏
+    （也就是"情感"）被一起抹掉了。改成只做轻微矫正——
+    差得多的句子保持自己的相对大小，只把跑偏的部分拉回来一点。
+    另外也避免把很轻的片段（可能是底噪）放大到失真。
     """
     if segment.dBFS == float("-inf"):
         return segment   # 整段是静音，没什么可调的
@@ -350,6 +390,17 @@ async def generate_audio_from_script(script, output_file="final_output.mp3",
     if not chunks:
         return None, "文案切分后没有内容，无法配音"
 
+    # 把界面上的 "+5%" / "-10%" 这类文本解析成数字
+    # （微软语音由 edge-tts 接收原文；本地克隆要用数字，见下面两处）
+    def _pct(value) -> int:
+        try:
+            return int(str(value).replace("%", "").replace("+", ""))
+        except ValueError:
+            return 0
+
+    rate_pct = _pct(rate)
+    volume_pct = _pct(volume)
+
     logger.info("开始配音：共 %s 句，引擎=%s，音色=%s",
                 len(chunks), "本地克隆" if use_gpt_sovits else "微软在线", voice)
 
@@ -368,7 +419,11 @@ async def generate_audio_from_script(script, output_file="final_output.mp3",
 
             if use_gpt_sovits:
                 result = await text_to_speech_gpt_sovits(
-                    chunk, str(temp_file), refer_wav_path, prompt_text, "all_zh", cfg,
+                    chunk, str(temp_file), refer_wav_path, prompt_text,
+                    "zh", cfg,
+                    # 语速滑块接进本地克隆：+10% → 1.1 倍速
+                    # （2026-10-09 之前 speed 写死 1.0，滑块在克隆模式下"静默失效"）
+                    speed=1.0 + rate_pct / 100,
                 )
                 if isinstance(result, tuple):
                     return None, f"第 {i + 1}/{len(chunks)} 句合成失败：{result[1]}"
@@ -396,6 +451,12 @@ async def generate_audio_from_script(script, output_file="final_output.mp3",
             if cfg.NORMALIZE_AUDIO:
                 audio = _match_loudness(audio, cfg.TARGET_DBFS)
 
+            # 音量滑块：微软语音由 edge-tts 自己应用；本地克隆在这里手动加。
+            # 放在响度对齐"之后"，否则刚调好的音量会被对齐步骤抹掉。
+            # 百分比换算：+20% ≈ 提升 1.6 分贝（感知上大致等量）
+            if use_gpt_sovits and volume_pct:
+                audio = audio.apply_gain(20 * math.log10(1 + volume_pct / 100))
+
             audio_segments.append(audio)
 
             # 句间插停顿（最后一句后面不用插）
@@ -412,6 +473,17 @@ async def generate_audio_from_script(script, output_file="final_output.mp3",
         combined = audio_segments[0]
         for seg in audio_segments[1:]:
             combined = combined + seg
+
+        # —— 峰值保护（2026-10-09 新增）——
+        # 逐句做响度对齐后直接相加，峰值可能顶到 0 dBFS，导出就是削顶爆音
+        # （实测过：成品峰值 0.00 dBFS）。这里检查一下：超过 -1.5 dBFS 就
+        # 整体等量降下来——整体降不破坏句子之间的比例，只防爆音。
+        # 留 1.5 分贝是想给 mp3 的编码过冲留余量：wav 里限到 -1.5，
+        # 转成 mp3 再解码出来大约 -1.2（实测过约 0.2-0.3 分贝的抬升）。
+        peak = combined.max_dBFS
+        if peak > -1.5:
+            combined = combined.apply_gain(-1.5 - peak)
+            logger.info("峰值保护生效：%.2f dBFS → -1.5 dBFS", peak)
 
         combined.export(
             str(output_file),

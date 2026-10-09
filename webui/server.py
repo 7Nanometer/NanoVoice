@@ -42,6 +42,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import config
+import main as core   # 以"模块对象"导入一次：退出时要读它的 gpt_sovits_process 全局变量
 from file_reader import SUPPORTED_EXTENSIONS, read_one_file
 from logger import get_logger
 from main import (
@@ -74,6 +75,13 @@ WEB_PORT = int(os.environ.get("WEB_PORT", config.APP_PORT))
 
 # 参考音频允许的格式（语音克隆用）
 AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".aac", ".wma"}
+
+# 上传文件大小上限：正常文章/录音远小于此；设限是为了防止
+# 误拖一个几 GB 的大文件把内存吃满（老写法是整份读进内存）。
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+
+# 配音任务超过这个时长还没结束，就视为卡死（释放锁，让新任务能开始）
+ZOMBIE_AFTER_SEC = 30 * 60
 
 app = FastAPI(title="多源文本融合与语音克隆配音系统", docs_url=None, redoc_url=None)
 
@@ -233,17 +241,35 @@ async def api_upload(kind: str = "article", files: list[UploadFile] = File(...))
         # 把文件名里 Windows 不允许的字符换成下划线，防止存盘出错
         safe_name = re.sub(r'[\\/:*?"<>|\r\n]', "_", raw_name)
         target = UPLOAD_DIR / f"{uuid.uuid4().hex[:8]}_{safe_name}"
-        data = await f.read()
-        target.write_bytes(data)
 
-        item = {"path": str(target), "name": raw_name, "size": len(data)}
+        # 分块写入磁盘（每次 1MB），不整份读进内存；超过上限立刻中止
+        size = 0
+        too_big = False
+        with open(target, "wb") as out:
+            while True:
+                chunk = await f.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_UPLOAD_BYTES:
+                    too_big = True
+                    break
+                out.write(chunk)
+        if too_big:
+            target.unlink(missing_ok=True)
+            results.append({"path": "", "name": raw_name, "size": size,
+                            "ok": False,
+                            "info": f"文件超过 {MAX_UPLOAD_BYTES // 1024 // 1024}MB 上限，已拒绝"})
+            continue
+
+        item = {"path": str(target), "name": raw_name, "size": size}
 
         if kind == "audio":
             ext = Path(safe_name).suffix.lower()
             if ext not in AUDIO_EXTS:
                 item.update(ok=False, info=f"不支持的音频格式 {ext or '（无扩展名）'}")
             else:
-                item.update(ok=True, info=f"{len(data) / 1024:.0f} KB")
+                item.update(ok=True, info=f"{size / 1024:.0f} KB")
         else:
             ok, result = read_one_file(target)
             if ok:
@@ -344,6 +370,15 @@ def api_synthesize(req: SynthReq):
         return {"ok": False, "error": "请先准备文案"}
 
     with _SYNTH_LOCK:
+        # 先释放"僵尸任务"：万一某次合成线程卡死（显卡异常之类），
+        # 它会把"同时只允许一个任务"的锁占死，导致后面所有合成都被拦住、
+        # 只能重启程序。超过 30 分钟还没结束的，判定为卡死并放行。
+        now = time.time()
+        for t in SYNTH_TASKS.values():
+            if (t.get("status") == "running"
+                    and now - t.get("started_at", now) > ZOMBIE_AFTER_SEC):
+                t.update(status="error", message="任务超时（视为卡死，已释放）")
+
         for t in SYNTH_TASKS.values():
             if t.get("status") == "running":
                 return {"ok": False, "error": "已有一个配音任务正在进行，请等它完成"}
@@ -463,7 +498,20 @@ def main_entry():
     if not os.environ.get("WEB_NO_BROWSER"):
         threading.Timer(1.2, lambda: webbrowser.open(f"http://127.0.0.1:{WEB_PORT}")).start()
 
-    uvicorn.run(app, host=config.APP_HOST, port=WEB_PORT, log_level="warning")
+    try:
+        uvicorn.run(app, host=config.APP_HOST, port=WEB_PORT, log_level="warning")
+    finally:
+        # 退出时把语音引擎一起关掉（旧版 main.py 有这段，新版界面漏了）。
+        # 不然 Ctrl+C 退出后，语音引擎会变成"孤儿进程"白占显存。
+        # （注意：直接点窗口右上角的 × 强关，系统不给清理机会——那种情况
+        #   下次启动时"端口被占用"的提示会引导处理。）
+        proc = getattr(core, "gpt_sovits_process", None)
+        if proc is not None and proc.poll() is None:
+            logger.info("退出：正在关闭语音引擎…")
+            try:
+                proc.terminate()
+            except OSError:
+                logger.warning("关闭语音引擎时出错", exc_info=True)
 
 
 if __name__ == "__main__":
