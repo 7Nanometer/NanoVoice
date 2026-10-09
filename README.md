@@ -44,16 +44,22 @@ pip install -r requirements.txt
 
 ### 第 3 步：双击 `start.bat`
 
-系统会自动做环境自检，然后打开浏览器界面。
+系统会自动做环境自检，然后打开浏览器界面（暗色"录音棚"主题）。
 
-要用语音克隆的话，进去后点一下「🚀 启动服务」，等它显示"已就绪"（首次约 10-30 秒）。
+要用语音克隆的话，进去后点一下「启动服务」，等它变成"在线"（首次约 10-30 秒）。
+
+> 万一新界面出问题，双击 `start_legacy.bat` 可以回到改造前的旧界面，功能都是好的。
 
 ---
 
 ## 目录说明
 
 ```
-├─ main.py                 主程序：网页界面 + 流程调度
+├─ webui/                  ★ 新版界面（暗色录音棚主题）
+│   ├─ server.py           界面后端服务（FastAPI）
+│   └─ static/             网页文件：页面、样式、交互、字体（全部本地自带）
+│
+├─ main.py                 旧版界面 + 流程调度（业务函数都在这里，两版界面共用）
 ├─ file_reader.py          读取拖入的文章文件（.txt / .md / .docx）
 ├─ article_extractor.py    从网址抓取文章正文
 ├─ script_generator.py     调用 AI 生成口播文案
@@ -63,7 +69,8 @@ pip install -r requirements.txt
 ├─ check_env.py            环境自检（跑不通时先运行它）
 ├─ run_sovits.py           单独启动/停止语音引擎（排查问题用）
 │
-├─ start.bat               一键启动
+├─ start.bat               一键启动（新版界面）
+├─ start_legacy.bat        旧版界面入口（新版出问题时的备胎）
 ├─ start_gpt_sovits.bat    只启动语音引擎（排查用）
 ├─ stop_gpt_sovits.bat     停止语音引擎
 ├─ copy_sovits.bat         搬运语音引擎（换机器时用）
@@ -98,6 +105,7 @@ pip install -r requirements.txt
 | [docs/03-常见问题排查.md](docs/03-常见问题排查.md) | 报错了 |
 | [docs/04-代码结构说明.md](docs/04-代码结构说明.md) | 答辩要讲原理 |
 | [docs/05-优化记录.md](docs/05-优化记录.md) | 写论文的"改进"章节 |
+| [docs/06-界面设计说明.md](docs/06-界面设计说明.md) | 答辩讲界面设计 |
 | [docs/00-交付说明.md](docs/00-交付说明.md) | 交给老师时 |
 
 ---

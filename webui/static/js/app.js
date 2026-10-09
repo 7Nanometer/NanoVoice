@@ -456,11 +456,14 @@
         timeout: 5 * 60 * 1000,   // 生成最多等 5 分钟
       });
       const script = r.script || '';
-      $('#scriptOutput').value = script;
-      updateWordCount();
+      // 以「❌」或「请先」开头的是"提示语"（比如"请先拖入文章文件"），
+      // 不是真文案——只弹提示，不往文案框里塞，免得它被当成文案念出来。
+      // （「【提示】…」开头的属于"成功但有话要说"，内容有效，正常显示。）
       if (script.startsWith('❌') || script.startsWith('请先')) {
-        toast(script.split('\n')[0], 'warn', 6000);
+        toast(script.split('\n')[0], 'warn', 6500);
       } else {
+        $('#scriptOutput').value = script;
+        updateWordCount();
         toast('文案生成完成');
       }
     } catch (e) {

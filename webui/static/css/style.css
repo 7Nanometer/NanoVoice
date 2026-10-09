@@ -116,8 +116,13 @@ body {
   letter-spacing: .01em;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-  overflow-x: hidden;
 }
+
+/* 防止出现横向滚动条。用 clip 而不是 hidden：
+   overflow-x:hidden 会把 html/body 悄悄变成"滚动容器"，
+   导致右列的"跟随滚动"（sticky）整个失效——这是前端出了名的暗坑。
+   clip 同样能裁掉溢出，但不改变滚动归属，sticky 不受影响。 */
+html, body { overflow-x: clip; }
 
 h1, h2, h3, p { margin: 0; }
 
@@ -498,6 +503,31 @@ body.is-ready .reveal {
   flex-direction: column;
   gap: 24px;
   min-width: 0;
+}
+
+/* 宽屏双列时，右列"跟着视线走"：
+   左列内容再长（比如展开克隆面板），右边的结果和操作按钮也一直看得见。
+   单列（窄屏）时自动失效，因为那时右列在下方，跟随没有意义。
+
+   注意两个条件缺一不可：
+   · 屏幕要够宽（双列布局）
+   · 屏幕要够高——卡片要是比屏幕还高，钉住它会连底部的按钮都够不到，
+     所以矮屏（比如 768p 的笔记本）上就老老实实跟着滚。 */
+@media (min-width: 1081px) and (min-height: 700px) {
+  #panel-voice .grid > .col:last-child {
+    position: sticky;
+    top: 84px;              /* 顶栏 60px + 一点呼吸空间 */
+    align-self: start;      /* 不跟左列等高，否则 sticky 无从生效 */
+  }
+}
+@media (min-width: 1081px) and (min-height: 960px) {
+  /* 文案生成页右列（这张卡片有 800 多像素高，要非常宽敞的屏幕才敢钉，
+     否则卡片底部的按钮会够不到） */
+  #panel-script .grid > .col:last-child {
+    position: sticky;
+    top: 84px;
+    align-self: start;
+  }
 }
 
 /* ============================================================
